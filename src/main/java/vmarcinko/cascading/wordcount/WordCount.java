@@ -10,8 +10,10 @@ import cascading.pipe.Each;
 import cascading.pipe.Pipe;
 import cascading.pipe.assembly.CountBy;
 import cascading.property.AppProps;
+import cascading.scheme.Scheme;
 import cascading.scheme.hadoop.TextDelimited;
 import cascading.scheme.hadoop.TextLine;
+import cascading.tap.MultiSourceTap;
 import cascading.tap.SinkMode;
 import cascading.tap.Tap;
 import cascading.tap.hadoop.Hfs;
@@ -22,6 +24,7 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
@@ -45,17 +48,16 @@ public class WordCount extends Configured implements Tool {
     }
 
     private void doWorkflow(String inputPath, String outputPath, Configuration conf) {
-        String lineTextFieldName = "lineText";
-
         // create source and sink taps
-        Tap linesTap = new Hfs(new TextLine(new Fields("lineOffset", lineTextFieldName), Fields.ALL), inputPath);
+        Tap linesTap = constructMultiHfsSourceTap(new TextLine(new Fields("lineOffset", "lineText"), Fields.ALL), inputPath);
         Tap wordCountsTap = new Hfs(new TextDelimited(true, "\t"), outputPath, SinkMode.REPLACE);
 
         Pipe pipe = new Pipe("word");
 
+        // split the line into words
         Fields wordFields = new Fields("word");
         RegexSplitGenerator wordSplitter = new RegexSplitGenerator(wordFields, "[\\W]+");
-        pipe = new Each(pipe, new Fields(lineTextFieldName), wordSplitter);
+        pipe = new Each(pipe, new Fields("lineText"), wordSplitter);
 
         // determine the word counts
         pipe = new CountBy(pipe, wordFields, new Fields("count"));
@@ -75,11 +77,22 @@ public class WordCount extends Configured implements Tool {
         Hadoop2MR1FlowConnector flowConnector = new Hadoop2MR1FlowConnector(properties);
         Flow flow = flowConnector.connect(flowDef);
 
+        // set mapreduce job name
         String mapReduceJobName = "Cascading Word Count: '" + inputPath + "' -> '" + outputPath + "'";
         FlowStepStrategy flowStepStrategy = constructMapReduceJobNameStrategy(mapReduceJobName);
         flow.setFlowStepStrategy(flowStepStrategy);
 
         flow.complete();
+    }
+
+    private Tap constructMultiHfsSourceTap(Scheme scheme, String inputPath) {
+        List<Tap> tapList = new ArrayList<Tap>();
+        String[] splits = inputPath.split(",");
+        for (String split : splits) {
+            tapList.add(new Hfs(scheme, split.trim()));
+        }
+        Tap[] taps = tapList.toArray(new Tap[tapList.size()]);
+        return new MultiSourceTap(taps);
     }
 
     private FlowStepStrategy constructMapReduceJobNameStrategy(final String mapReduceJobName) {
@@ -93,5 +106,4 @@ public class WordCount extends Configured implements Tool {
             }
         };
     }
-
 }
